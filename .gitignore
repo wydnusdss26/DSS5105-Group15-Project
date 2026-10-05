@@ -1,0 +1,9 @@
+.venv/
+.uv-cache/
+.uv-python/
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+.env
+runtime/
+tmp/
