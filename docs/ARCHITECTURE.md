@@ -4,7 +4,7 @@ Source requirements: Track 1 on pages 2–4 of `Capstone_Project_Tracks_v3.pdf`,
 
 ```mermaid
 flowchart LR
-    U[Manager / Streamlit] --> A[Optional DeepSeek agent]
+    U[Manager / Streamlit] --> A[Optional GPT-6.1 Sol agent]
     U --> T[Typed Python tools]
     A --> T
     T --> D[Fresh CSV snapshots]
@@ -24,7 +24,7 @@ flowchart LR
 
 `app.py` is the entry point. `order_risk.py` retains original risk calculations. `factory.py` implements read tools and captures exact rows with CSV line numbers and SHA256. `agent.py` owns a bounded tool loop and rejects missing evidence IDs and literal numeric claims absent from cited facts. Literal-number matching does not prove semantic entailment; human/live evaluation is still needed. Prior chat is context only; every turn reads fresh data.
 
-`deepseek_client.py` uses a fixed official endpoint and never puts the key in prompts/errors. Explicit local opt-in gates requests, with an environment override. The user has now authorized data-bearing API access and chat is enabled. A live retrieval smoke test passed; the full model evaluation remains outstanding. Disabling network access restores deterministic briefing fallback.
+`openai_client.py` uses the fixed OpenAI Responses endpoint and model `gpt-6.1-sol`. It adapts existing tool schemas with `strict=false`, preserves encrypted reasoning and function-call IDs across tool rounds, and maps usage into the existing internal contract. Keys never enter prompts/errors. The provider-specific `OPENAI_NETWORK_ENABLED` flag gates data-bearing requests, with an environment override. OpenAI authentication and model visibility have been verified. The user explicitly authorized data-bearing calls and the gate is enabled. A live generation probe returned `credit_balance_exhausted`; live tool-answer validation must wait for API credits. Billing failures produce safe error messages and deterministic briefing fallback.
 
 `state.py` owns SQLite transactions, idempotent confirmation and the simulation clock. No model-exposed commit tool exists. `scheduler.py` computes checks and briefings; `worker.py` runs separately with an OS-held singleton lock. Watches survive restarts, fire once and notify only at the agreed deadline. Missing source data produces a data-gap alert, not an invented operational claim.
 
@@ -34,7 +34,7 @@ flowchart LR
 |---|---|---|
 | Five tool kinds | Eight documented tools, narrow schemas | Unit and offline contract tests |
 | Scheduled briefing | Confirmed daily schedule, once-per-date persisted facts/prose | Worker tests; deterministic prose currently |
-| Multi-turn Q&A | DeepSeek tool loop, fresh reads, bounded history, evidence | Mocked protocol only; real behavior unmeasured |
+| Multi-turn Q&A | GPT-6.1 Sol Responses tool loop, fresh reads, bounded history, evidence | Mocked Responses protocol and real authentication/model visibility; live tool answers pending API credits |
 | Watches | Order movement, stage output, reminders, deduplication | Time-injected tests, worker heartbeat |
 | Feasibility | Internal load/rates and all workshop candidates | Independent reference arithmetic; estimates only |
 | Actions | Notes, drafts, reminders, schedules, watches/cancellation | Transaction tests; no external sends |
@@ -44,7 +44,7 @@ flowchart LR
 
 ## Limits
 
-- Snapshot CSVs are not an ERP feed. The clock advances, files do not. Missing production days are explicit.
+- Snapshot CSVs are not an ERP feed. The local demo uses the SQLite setting `fixed_reference_date = "2026-04-01"` to keep all views and worker calculations on the same reference date. Without that override, the simulation clock advances from its original anchor. Missing production days are explicit. While the date is fixed, future-day reminders do not become due automatically.
 - Internal feasibility assumes serial stages and full remaining quantities at current/downstream stages. Parallel production may finish sooner; per-order completed pieces are unavailable.
 - Workshops are assumed to handle the full batch. The fraction reworked after defects is unknown, so defect probability is not converted into invented retry days. Monetary units are unspecified.
 - Output monitoring is heuristic, not seasonal/causal analysis. Local single-user trust model; no external push or automatic startup on reboot. After restart, due checks catch up once.

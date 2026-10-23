@@ -5,24 +5,21 @@ import streamlit as st
 from order_risk import TODAY, ORDERS_PATH, STAGES, RISK_LEVELS, load_orders, evaluate_orders, assess_risk, working_days_since
 from state import Store, wall_now
 from copilot_ui import page_router
+from openai_client import network_enabled
+from ui_theme import apply_theme, page_heading, sidebar_navigation, workspace_topline
 
 
 def main() -> None:
-    st.set_page_config(page_title="SweaterCo | Manager Co-pilot", page_icon="🧶", layout="wide")
+    st.set_page_config(page_title="Factory Co-pilot | SweaterCo", page_icon=":material/factory:", layout="wide")
+    apply_theme()
     store = Store()
     today = store.today()
-    page = st.sidebar.radio("Workspace", ["Risk overview", "Co-pilot", "Production & discovery", "Feasibility", "Briefing", "Actions & watches"])
-    st.sidebar.caption("DeepSeek · deepseek-flash")
-    from deepseek_client import network_enabled
-    st.sidebar.caption("Online Q&A: enabled" if network_enabled() else "Online Q&A: disabled (local mode)")
-    st.sidebar.caption(f"Simulation date: {today.isoformat()} · Beijing time: {wall_now():%Y-%m-%d %H:%M}")
-    st.sidebar.caption("The simulation date advances daily. Production data is not generated automatically.")
+    page = sidebar_navigation(today, network_enabled())
+    workspace_topline(page, today)
     if page != "Risk overview":
         page_router(page, today)
         return
-    st.title("SweaterCo · Order risk")
-    st.subheader("Spot delivery problems while there is time to act.")
-    st.info(f"Reference date: **{today.isoformat()}** · Factory working days: **Monday–Saturday**")
+    page_heading("Stay ahead of delivery risks.", "A clear view of unfinished orders, approaching deadlines and the follow-ups that need your attention.", "Order risk overview")
     st.caption("Rule-based warnings for unfinished orders. These flags are not completion forecasts.")
 
     try:

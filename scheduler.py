@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from agent import numeric_tokens
 from briefing import build_briefing
-from deepseek_client import DeepSeekError, complete
+from openai_client import MODEL, ModelError, complete
 from factory import Factory
 from state import ZONE, wall_now
 
@@ -20,8 +20,8 @@ def create_briefing(factory, client=complete):
         summary = answer["summary"]
         if not isinstance(summary, str) or not summary.strip() or not numeric_tokens(summary).issubset(numeric_tokens(json.dumps(facts))):
             raise ValueError("Unsupported briefing numbers")
-        payload.update(summary=summary, generation="deepseek-flash", usage=usage)
-    except (DeepSeekError, ValueError, KeyError, TypeError) as exc:
+        payload.update(summary=summary, generation=MODEL, usage=usage)
+    except (ModelError, ValueError, KeyError, TypeError) as exc:
         payload["generation_error"] = str(exc)
     return payload
 

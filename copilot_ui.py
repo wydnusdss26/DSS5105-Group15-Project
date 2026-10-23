@@ -1,16 +1,18 @@
 """Streamlit views for the factory co-pilot; only explicit Confirm commits actions."""
 import json
+import re
 from datetime import datetime, timedelta
 
 import pandas as pd
 import streamlit as st
 
 from agent import Copilot
-from deepseek_client import DeepSeekError, api_key, network_enabled
+from openai_client import MODEL_LABEL, ModelError, api_key, network_enabled
 from factory import Factory, JUDGEMENT_POLICIES
 from order_risk import STAGES
 from scheduler import create_briefing
 from state import Store, propose_action, wall_now
+from ui_theme import chat_welcome, page_heading
 
 
 def evidence_view(evidence):
@@ -43,11 +45,18 @@ def proposal_view(proposal, store):
         st.rerun()
 
 
+def readable_answer(text):
+    """Space out older plain-text replies without rewriting their contents."""
+    if len(text) < 240 or "\n" in text or re.search(r"[*`#]|\[[^\]]+\]\(", text):
+        return text
+    return re.sub(r"(?<=[.!?]) +(?=[A-Z])", "\n\n", text)
+
+
 def render_result(result, store, key):
-    st.markdown(result["summary"])
+    st.markdown(readable_answer(result["summary"]))
     if result.get("details"):
         with st.expander("Details"):
-            st.write(result["details"])
+            st.markdown(readable_answer(result["details"]))
     st.caption(f"{result['model']} · {result['elapsed_seconds']} seconds · Evidence: {', '.join(result['evidence_ids']) or 'No factual references'}")
     # Namespace evidence IDs by conversation turn so repeated evidence has distinct widgets.
     evidence_view({f"{key}-{ref}": value for ref, value in result["evidence"].items()})
@@ -61,48 +70,77 @@ def render_result(result, store, key):
         st.json(result["trace"], expanded=False)
 
 
+def set_prompt(question):
+    """Fill the composer only; selecting a suggestion never calls the model."""
+    st.session_state.copilot_prompt = question
+
+
 def chat_page(factory, store):
-    st.header("Co-pilot")
-    st.caption("Each answer uses fresh data and verified calculations. Expand the evidence to inspect its sources.")
-    if not network_enabled():
-        st.info("Online Q&A is disabled by your preference. Risk, production, estimates, briefings, and watches remain available locally. No factory data is sent to DeepSeek.")
-        with st.form("offline_lookup"):
-            st.subheader("Offline order lookup and trace")
-            order_id = st.text_input("Exact order ID", "ORD-002")
-            if st.form_submit_button("Load fresh evidence"):
-                st.session_state.offline_trace = factory.trace_order(order_id)
+    st.session_state.setdefault("conversation", [])
+    online = network_enabled()
+    ready = online and bool(api_key())
+    if not st.session_state.conversation:
+        chat_welcome()
+    else:
+        page_heading("Let's work through it.", "Follow the evidence from question to decision.", "Factory Co-pilot")
+    if not online:
+        st.info("Online Q&A is disabled by your preference. Risk, production, estimates, briefings, and watches remain available locally. No factory data is sent to OpenAI.")
+        with st.expander("Local order lookup · no online access needed", expanded=True):
+            with st.form("offline_lookup"):
+                order_id = st.text_input("Exact order ID", "ORD-002")
+                if st.form_submit_button("Load fresh evidence"):
+                    st.session_state.offline_trace = factory.trace_order(order_id)
         if st.session_state.get("offline_trace"):
             evidence_view({"offline-order": st.session_state.offline_trace})
-    elif not api_key():
-        st.info("Set DEEPSEEK_API_KEY to enable Q&A. Other pages remain available offline.")
+    elif not ready:
+        st.info("Set OPENAI_API_KEY to enable Q&A. Other pages remain available offline.")
+    if not st.session_state.conversation:
+        st.subheader("Where would you like to start?")
+        st.caption("Choose a question to edit it, then send.")
+        prompts = [
+            ("Review delivery risks", "See overdue orders and upcoming deadlines.", "Which unfinished orders are overdue or at risk?", ":material/assignment_late:"),
+            ("Explore production", "Compare output against an explicit baseline.", "Which stages had unusual output yesterday?", ":material/query_stats:"),
+            ("Trace an order", "Understand the evidence behind a risk flag.", "Why is ORD-002 at risk?", ":material/route:"),
+            ("Check a new order", "Compare internal production and workshops.", f"Can we accept 800 TOPS pieces due on {(factory.today+timedelta(days=24)).isoformat()}?", ":material/inventory_2:"),
+        ]
+        with st.container(key="quick_prompts"):
+            for start in (0, 2):
+                columns = st.columns(2)
+                for offset, column in enumerate(columns):
+                    label, description, prompt, icon = prompts[start+offset]
+                    with column:
+                        st.button(label, icon=icon, width="stretch", key=f"prompt_{start+offset}",
+                                  disabled=not ready, on_click=set_prompt, args=(prompt,))
+                        st.caption(description)
     with st.expander("Example questions"):
         st.markdown("- Which stages had unusual output yesterday?\n- How are TrendCart orders doing?\n- Why is ORD-002 at risk?\n- Can we accept 800 hoodies due on 2026-04-25?\n- Draft a follow-up message for ORD-002.\n- Remind me tomorrow at 09:00 if ORD-005 has not moved.")
-    st.session_state.setdefault("conversation", [])
-    if st.button("Clear conversation"):
-        st.session_state.conversation = []
-        st.rerun()
+    if st.session_state.conversation:
+        _, toolbar = st.columns([4, 1])
+        if toolbar.button("Clear conversation", icon=":material/restart_alt:", width="stretch"):
+            st.session_state.conversation = []
+            st.rerun()
     for index, turn in enumerate(st.session_state.conversation):
-        with st.chat_message("user"):
+        with st.chat_message("user", avatar=":material/person:"):
             st.write(turn["question"])
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar=":material/explore:"):
             render_result(turn["result"], store, f"turn{index}")
-    question = st.chat_input("Ask about orders, output, due dates, or prepare an action...", disabled=not network_enabled() or not api_key())
+    question = st.chat_input("Ask your factory a question...", key="copilot_prompt", max_chars=6000, disabled=not ready)
     if question:
         history = []
         for turn in st.session_state.conversation:
             history.extend([{"role": "user", "content": turn["question"]},
                             {"role": "assistant", "content": turn["result"]["summary"]}])
-        with st.spinner("Reading fresh data and asking DeepSeek..."):
+        with st.spinner(f"Reading fresh data and asking {MODEL_LABEL}..."):
             try:
                 result = Copilot(factory, store).ask(question, history)
                 st.session_state.conversation.append({"question": question, "result": result})
                 st.rerun()
-            except (DeepSeekError, ValueError, OSError) as exc:
+            except (ModelError, ValueError, OSError) as exc:
                 st.error(str(exc))
 
 
 def production_page(factory):
-    st.header("Production & discovery")
+    page_heading("See beyond the daily numbers.", "Compare production with clear baselines and explore the findings that deserve a closer look.", "Production & discovery")
     stage = st.selectbox("Stage", STAGES)
     target = st.date_input("Comparison date", factory.today-timedelta(days=1))
     method = st.selectbox("Comparison baseline", list(JUDGEMENT_POLICIES), format_func=lambda value: JUDGEMENT_POLICIES[value]["label"])
@@ -147,7 +185,7 @@ def production_page(factory):
 
 
 def feasibility_page(factory):
-    st.header("Feasibility")
+    page_heading("Can we deliver the next order?", "Compare internal workload with eligible workshops before making a delivery commitment.", "Feasibility")
     with st.form("feasibility"):
         pieces = st.number_input("Quantity (pieces)", 1, 1000000, 800, step=100)
         category = st.selectbox("Category", ["TOPS", "ACCESSORIES"])
@@ -169,7 +207,7 @@ def feasibility_page(factory):
 
 
 def briefing_page(factory, store):
-    st.header("Briefing")
+    page_heading("Start with the full picture.", "Your management briefing brings delivery exposure, production changes and recommended follow-ups together.", "Daily briefing")
     st.caption("Scheduled briefings run in the background even when the browser is closed. The computer must be awake and the background worker running.")
     if st.button("Preview briefing (without saving)", type="primary"):
         with st.spinner("Summarizing yesterday, risks, and decisions..."):
@@ -225,7 +263,7 @@ def activity_inbox(store):
 
 
 def actions_page(factory, store):
-    st.header("Actions & watches")
+    page_heading("Turn decisions into follow-ups.", "Review proposals, confirm the exact scope and keep track of your saved actions and alerts.", "Actions & watches")
     st.caption("Notes, follow-up drafts, watches, and reminders are saved locally. External email and chat delivery are not connected.")
     with st.form("manual_action"):
         kind = st.selectbox("Action", ["add_note", "save_draft", "watch_order", "watch_stage", "reminder", "cancel_watch"])

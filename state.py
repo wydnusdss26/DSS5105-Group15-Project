@@ -53,6 +53,9 @@ class Store:
             db.execute("INSERT OR REPLACE INTO settings VALUES (?,?)", (key, json.dumps(value)))
 
     def today(self, now=None):
+        fixed_date = self.get_setting("fixed_reference_date")
+        if fixed_date:
+            return date.fromisoformat(fixed_date)
         now = now or wall_now()
         anchor = date.fromisoformat(self.get_setting("anchor_wall_date"))
         return TODAY + timedelta(days=(now.date()-anchor).days)
