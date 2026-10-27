@@ -1,62 +1,64 @@
-# SweaterCo — Track 1 经理助手
+# SweaterCo — Track 1 Factory Manager Co-pilot
 
-本地 Streamlit 应用：风险订单、产量异常、可行性估算、晨报、带确认的备注/草稿/提醒，以及独立后台监控。
+A local Streamlit application for reviewing at-risk orders, detecting production anomalies, estimating feasibility, generating morning briefings, and preparing notes, drafts, and reminders with human confirmation. A separate background worker handles scheduled monitoring.
 
-**当前问答与晨报概述已适配 OpenAI GPT-6.1 Sol，并已获明确授权开启联网。** 密钥认证与模型可见性检查通过；真实生成检查返回 `credit_balance_exhausted`，需要补充 OpenAI API 余额后才能完成问答验证。此前的 DeepSeek 冒烟测试及 33 题离线报告属于原有验证记录，不能当作新模型的问答准确率。
+**Q&A and briefing summaries use OpenAI GPT-6.1 Sol.** Network access must be explicitly enabled in the configuration. Earlier setup checks confirmed key authentication and model availability, but a generation request returned `credit_balance_exhausted`. This is a historical setup result, not a statement about the current account balance. Earlier DeepSeek smoke tests and the 33-case offline report are legacy validation records and must not be presented as the current model's Q&A accuracy.
 
-## 启动
+## Getting Started
 
-需要 Python 3.11+ 与 uv。在项目根目录运行：
+Requires Python 3.11+ and uv. Run the following commands from the project root:
 
 ```powershell
 uv sync
 uv run streamlit run app.py --server.port 8503
 ```
 
-打开 http://localhost:8503 。8502 保留给原来的应用。在另一个终端运行后台检查器：
+Open http://localhost:8503. Port 8502 is reserved for the original application. Start the background worker in a separate terminal:
 
 ```powershell
 uv run python worker.py
 ```
 
-应用和 worker 使用同一个 `runtime/factory.sqlite3`。关闭浏览器不会停止 worker；`Ctrl+C` 停止对应终端里的进程。电脑休眠、关机、worker 停止时不会检查；重新启动后执行到期检查。不自动注册操作系统开机任务。UI 显示后台心跳。
+The application and worker share `runtime/factory.sqlite3`. Closing the browser does not stop the worker; press `Ctrl+C` in its terminal to stop the process. Checks do not run while the computer is asleep or shut down, or while the worker is stopped. Due checks run after the worker restarts. The application does not automatically register an operating-system startup task. The UI displays the worker's heartbeat.
 
-## 使用
+## Features and Usage
 
-- **风险概览**：逾期或有风险订单，保留原来的过滤和 7 天/3 工作日规则。
-- **经理助手**：离线时可按订单 ID 查看最新源记录。启用联网后，使用 GPT-6.1 Sol 多轮工具问答；每轮重新读取 CSV，简短结论后展开依据。
-- **产量与异常**：可选择前 28 天工作日、上一完整周或过去四周同一星期几；支持比较假设的单日产量。工具展示样本、缺失日期、均值、±20% 正常区间、各口径结论和原始行。阈值与最低样本数是公开的启发式规则；不足时不下结论。近期最大/最小值也由 Python 计算。
-- **接单估算**：输入件数、品类和明确交期，比较内部积压与外协资格、队列、产能、运输和风险。不分配订单、不预订产能、不保证交期。
-- **晨报**：生成预览不保存。每日计划先预览再确认；worker 每个模拟日期保存一次晨报。离线时使用明确标注的确定性摘要。
-- **操作与监控**：先预览，再点 Confirm；Reject 不执行。备注和催单消息仅保存在本机。订单监控到期比较工序及最后活动日期，工序监控检查最近完整工作日。每项监控最多提醒一次，提醒在应用内收件箱展示，无外部推送。
+- **Risk overview:** Review overdue and at-risk orders using the existing filters and the 7-day / 3-working-day rules.
+- **Manager assistant:** In offline mode, look up the latest source records by order ID. With network access enabled, GPT-6.1 Sol answers questions through multiple rounds of tool calls. CSV data is read afresh for each round, and answers provide a concise conclusion with expandable supporting evidence.
+- **Production and anomalies:** Choose a baseline based on working days in the preceding 28 days, the previous complete week, or the same weekday over the preceding four weeks. Compare hypothetical daily output against these baselines. Tools expose samples, missing dates, means, the ±20% normal band, conclusions for each baseline, and source rows. Thresholds and minimum sample sizes are explicit heuristic rules; insufficient data produces no conclusion. Recent maximum and minimum values are also calculated in Python.
+- **Feasibility estimates:** Enter a quantity, product category, and explicit due date. Compare internal backlog with subcontractor eligibility, queues, capacity, transport, and risk. Estimates do not allocate orders, reserve capacity, or guarantee delivery dates.
+- **Morning briefings:** Generate a preview without saving it. Preview and confirm a daily schedule before activating it; the worker saves one briefing per simulated date. Offline mode uses a clearly labelled deterministic summary.
+- **Actions and monitoring:** Preview an action, then select **Confirm** to proceed. **Reject** performs no action. Notes and follow-up message drafts are stored locally only. When an order watch is due, it compares the production stage and last activity date; stage watches check the latest complete working day. Each watch generates at most one alert, shown in the application's inbox without external push notifications.
 
-首次运行时模拟日期从 **2026-04-01** 开始；随后每过一个真实日历日推进一天。计划时间为 Asia/Shanghai。侧栏显示两个时钟。CSV 不会自动增加数据：缺失的新日产量标记为未知，而不是零。评测固定在 2026-04-01。
+The simulated clock starts at **2026-04-01** on first use and normally advances by one day for each real calendar day. A configured fixed reference date overrides this advancing clock. Schedule times use Asia/Shanghai. The sidebar displays both clocks. CSV files do not automatically gain new records: missing output for new dates is treated as unknown, not zero. Evaluation uses the fixed reference date 2026-04-01.
 
-## OpenAI 接入（已授权开启，API 余额待补充）
+## OpenAI Configuration
 
-模型固定为 `gpt-6.1-sol`，接口固定为 `https://api.openai.com/v1/responses`。该模型通过 Responses API 调用工具，使用 `reasoning.effort=low`。请求设置 `store=false`，工具交互期间保留返回的加密推理项目，以便继续同一轮工具执行。八个工具的参数、Python 计算与人工确认要求保持不变。模型配置与通信位于 `openai_client.py`。
+The model is `gpt-6.1-sol`, using `https://api.openai.com/v1/responses`. Tool calls use the Responses API with `reasoning.effort=low`. Requests set `store=false`; returned encrypted reasoning items are retained during tool interactions to continue the same execution sequence. The eight tools retain their parameter definitions, Python calculations, and human-confirmation requirements. Model configuration and communication are implemented in `openai_client.py`.
 
-密钥从环境变量 `OPENAI_API_KEY` 或被 Git 忽略的 `.streamlit/secrets.toml` 读取，空模板位于 `.streamlit/secrets.example.toml`。联网开关为 `OPENAI_NETWORK_ENABLED`，只有明确设为 `true` 才能调用 OpenAI，环境变量优先。DeepSeek 的旧密钥和旧联网开关不会启用 OpenAI，也不会用于 OpenAI 请求。部署到 Streamlit Cloud 时，需要在该部署的 Secrets 中单独设置 OpenAI 密钥与联网开关。应用和 worker 都需要重新启动才能完整加载模型迁移。
+The API key is read from the `OPENAI_API_KEY` environment variable or the Git-ignored `.streamlit/secrets.toml` file. A blank template is available at `.streamlit/secrets.example.toml`. OpenAI requests are permitted only when `OPENAI_NETWORK_ENABLED` is explicitly set to `true`; environment variables take precedence. Legacy DeepSeek keys and network settings neither enable OpenAI nor supply credentials for OpenAI requests.
 
-请求有超时和最多六轮工具调用限制。API 错误只显示安全摘要。模型没有任意 SQL、代码执行、CSV 写入或执行操作的工具；只能提出待确认操作。
+For Streamlit Community Cloud, configure the OpenAI key and network setting separately in the deployment's **Secrets**. Restart both the application and worker after changing the model configuration.
 
-## 验证
+Requests have timeouts and a maximum of six tool-call rounds. API errors expose only a safe summary. The model has no tools for arbitrary SQL, code execution, CSV modification, or direct action execution; it can only propose actions for human confirmation.
+
+## Validation
 
 ```powershell
 uv run python -m unittest discover -s tests -v
 uv run python evaluate.py
 ```
 
-`evaluation/cases.json` 包含 33 道有核验答案的开发题：7 道边界/歧义/不可回答题，8 道可行性或操作题。27 项可离线执行的工具断言通过；其余 6 题需要真实自然语言模型判定，未评测。**100% 是离线工具断言通过率，不是问答准确率。**
+The repository's original `evaluation/cases.json` contains 33 development cases with verified reference answers: seven edge, ambiguous, or unanswerable cases, and eight feasibility or action cases. The legacy offline report records 27 passing tool assertions; the remaining six cases require evaluation of natural-language model responses and were not assessed in that offline run. **The reported 100% is an offline tool-assertion pass rate, not Q&A accuracy.**
 
-金标准由 `evaluation/build_cases.py` 用标准库直接读取 CSV、独立计算；不导入应用工具。原始文件哈希保存在题集里。重新生成金标准只用于审阅后的数据/规范变更，不能掩盖失败。
+Reference answers are generated by `evaluation/build_cases.py`, which reads the CSV files directly and calculates results independently using the Python standard library. It does not import the application's tools. Source-file hashes are stored in the evaluation set. Regenerate reference answers only after reviewing changes to the data or specification, never to conceal failures.
 
-`uv run python evaluate.py --live` 可记录真实模型行为与工具事实匹配，但仍需人工语义审查、留出集和真实失败案例分析；完整真实评测尚未运行。
+Run `uv run python evaluate.py --live` to record real model behaviour and compare it with tool-derived facts. Human semantic review, held-out cases, and analysis of actual failures are still needed; the legacy offline results alone do not establish end-to-end model accuracy.
 
-## 文档
+## Documentation
 
-- `docs/TOOL_SPEC.md`：工具输入、输出、目的、非目标、故障处理和影响范围。
-- `docs/ARCHITECTURE.md`：数据流、功能对照、假设和剩余交付项。
-- `docs/EVALUATION.md`：测量口径、结果、故障分析和未完成验证。
+- [Tool specification](docs/TOOL_SPEC.md): Tool inputs, outputs, purpose, non-goals, failure handling, and scope of effects.
+- [Architecture](docs/ARCHITECTURE.md): Data flow, feature mapping, assumptions, and remaining deliverables.
+- [Evaluation](docs/EVALUATION.md): Measurement definitions, results, failure analysis, and outstanding validation.
 
-本地单经理原型，不含生产环境身份认证、多租户、外部消息发送或手机推送。源 CSV 保持不变；运行状态、凭证与临时文件不纳入版本控制。
+This is a local prototype for a single manager. It does not include production authentication, multi-tenancy, external message delivery, or mobile push notifications. Source CSV files remain unchanged. Runtime state, credentials, and temporary files are excluded from version control.
